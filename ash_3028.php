@@ -1,7 +1,7 @@
 <?php
 
 /**
- * index.php
+ * ash_3028.php
  * Main USSD endpoint for the Ashesi University Meal Plan System.
  *
  * Follows the structure and logic style of the Ashesi class demo.
