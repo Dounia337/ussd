@@ -9,7 +9,7 @@
  *
  * USSD Input Parameters:
  *   sessionId   - Unique session identifier from the USSD gateway
- *   serviceCode - The USSD service code dialled (e.g. *714*100#)
+ *   serviceCode - The USSD service code dialled (*899*3028#)
  *   phoneNumber - The caller's MSISDN
  *   text        - Accumulated user input, levels separated by '*'
  *
