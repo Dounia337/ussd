@@ -1,7 +1,7 @@
 <?php
 
 /**
- * ash_3028.php  (Session-Refactored)
+ * ash_3028.php  (
  * Ashesi University Meal Plan USSD System.
  *
  * switch ($step)   where $step  = sessionManager($sessionId)
@@ -60,9 +60,6 @@ $data      = !empty($textArray) ? end($textArray) : '';   // current user input
  * Looks up the ussd_sessions record for $sessionId and returns current_step.
  * Returns 0 if no record exists — i.e., this is a brand-new session.
  *
- * Mirrors the class demo's sessionManager(), which returned the count of
- * filled T-columns. Here we store the step number explicitly in the DB.
- *
  * @param  string $sessionId  — unique ID provided by the USSD gateway
  * @return int    current_step (0 = no session / new)
  */
@@ -90,7 +87,6 @@ function sessionManager($sessionId)
  * createSession()
  * Inserts a new row in ussd_sessions at step 0 for this $sessionId.
  * Uses INSERT IGNORE so a duplicate dial never causes an error.
- * Mirrors the class demo's IdentifyUser().
  *
  * @param  string $sessionId
  * @return void
@@ -227,7 +223,7 @@ function clearSession($sessionId)
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 3 — STUDENT / BUSINESS LOGIC FUNCTIONS  (unchanged from v1)
+// SECTION 3 — STUDENT / BUSINESS LOGIC FUNCTIONS 
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -407,14 +403,13 @@ function formatGHS($amount)
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 4 — DETERMINE CURRENT SESSION STEP  ← KEY CHANGE
+// SECTION 4 — DETERMINE CURRENT SESSION STEP 
 //
 // sessionManager() queries ussd_sessions using $sessionId as the key.
 // The returned integer drives the switch below.
-// This completely replaces: $level = count(explode('*', $text))
 // ════════════════════════════════════════════════════════════════════════════
 
-$step     = sessionManager($sessionId);   // ← replaces: $level = count($textArray)
+$step     = sessionManager($sessionId);   
 $response = '';
 
 
@@ -422,7 +417,6 @@ switch ($step) {
 
     // ════════════════════════════════════════════════════════════════════════
     // STEP 0 — New session: show welcome screen, prompt for Student ID
-    // Mirrors demo case 0: create the session row then show welcome
     // ════════════════════════════════════════════════════════════════════════
     case 0:
         createSession($sessionId);    // ← INSERT INTO ussd_sessions
@@ -439,7 +433,7 @@ switch ($step) {
     // $data = the student ID the user just typed
     // ════════════════════════════════════════════════════════════════════════
     case 1:
-        $studentId = $data;   // ← replaces: $studentId = $textArray[0]
+        $studentId = $data;   
 
         if (!validateStudentID($studentId)) {
             $response  = "END Invalid Student ID.\n";
@@ -456,7 +450,7 @@ switch ($step) {
             $response  = "END Student ID not found.\n";
             $response .= "Please contact the Registrar\n";
             $response .= "or dial again with a valid ID.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionId);   
             break;
         }
 
@@ -479,23 +473,23 @@ switch ($step) {
     // ════════════════════════════════════════════════════════════════════════
     // STEP 2 — Main menu choice received
     // $data = the digit the user pressed (1, 2, 3, 4, or 0)
-    // student_id is read from ussd_sessions — not from $text
+    // student_id is read from ussd_sessions 
     // ════════════════════════════════════════════════════════════════════════
     case 2:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
-        $menuChoice = $data;                                        // ← replaces: $textArray[1]
+        $studentId  = getSessionField($sessionId, 'student_id');   
+        $menuChoice = $data;                                      
 
         $student = getStudent($studentId);
 
         if (!$student) {
             $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionId);   
             break;
         }
 
         switch ($menuChoice) {
 
-            // ── 1. Check Balance ─────────────────────────────────────────
+            // ── 1. Check Balance 
             case '1':
                 $response  = "END Meal Plan Balance\n";
                 $response .= "================================\n";
@@ -506,10 +500,10 @@ switch ($step) {
                 $response .= "Daily : " . formatGHS($student['daily_balance']) . "\n";
                 $response .= "--------------------------------\n";
                 $response .= "Daily balance resets at midnight.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);  
                 break;
 
-            // ── 2. Request PIN ───────────────────────────────────────────
+            // ── 2. Request PIN 
             case '2':
                 $pin = generateAndStorePIN($studentId);
                 $response  = "END PIN Request Successful!\n";
@@ -519,10 +513,10 @@ switch ($step) {
                 $response .= "--------------------------------\n";
                 $response .= "Keep this PIN private.\n";
                 $response .= "Do not share with anyone.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId); 
                 break;
 
-            // ── 3. Change PIN — store choice, prompt for current PIN ─────
+            // ── 3. Change PIN — store choice, prompt for current PIN 
             case '3':
                 // Store T1 = '3' so step 3 knows which branch it is in
                 advanceSession($sessionId, 'T1', '3');   // ← UPDATE T1='3', step 2→3
@@ -532,7 +526,7 @@ switch ($step) {
                 $response .= "Enter your current 4-digit PIN:";
                 break;
 
-            // ── 4. Top Up — store choice, prompt for amount ──────────────
+            // ── 4. Top Up — store choice, prompt for amount 
             case '4':
                 // Store T1 = '4' so step 3 knows which branch it is in
                 advanceSession($sessionId, 'T1', '4');   // ← UPDATE T1='4', step 2→3
@@ -546,18 +540,18 @@ switch ($step) {
                 $response .= "(Min: 10 | Max: 5,000)";
                 break;
 
-            // ── 0. Exit ──────────────────────────────────────────────────
+            // ── 0. Exit 
             case '0':
                 $response  = "END Thank you, " . $student['name'] . "!\n";
                 $response .= "Have a great day at Ashesi.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);   
                 break;
 
             default:
                 $response  = "END Invalid option selected.\n";
                 $response .= "Please dial again and choose\n";
                 $response .= "a valid menu option.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);   
                 break;
         }
         break;
@@ -570,27 +564,27 @@ switch ($step) {
     //   T1 = '4' → Top Up: user entered the amount to top up
     // ════════════════════════════════════════════════════════════════════════
     case 3:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
-        $menuChoice = getSessionField($sessionId, 'T1');            // ← replaces: $textArray[1]
-        $input3     = $data;                                        // ← replaces: $textArray[2]
+        $studentId  = getSessionField($sessionId, 'student_id');   
+        $menuChoice = getSessionField($sessionId, 'T1');          
+        $input3     = $data;                                       
 
         $student = getStudent($studentId);
 
         if (!$student) {
             $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionId);  
             break;
         }
 
         switch ($menuChoice) {
 
-            // ── Change PIN: validate current PIN, prompt for new PIN ──────
+            // ── Change PIN: validate current PIN, prompt for new PIN 
             case '3':
                 if (!preg_match('/^\d{4}$/', $input3)) {
                     $response  = "END Invalid PIN format.\n";
                     $response .= "PIN must be exactly 4 digits.\n";
                     $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);   // 
                     break;
                 }
 
@@ -598,7 +592,7 @@ switch ($step) {
                     $response  = "END Incorrect PIN or PIN expired.\n";
                     $response .= "Please request a new PIN first\n";
                     $response .= "then try again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);   
                     break;
                 }
 
@@ -610,13 +604,13 @@ switch ($step) {
                 $response .= "Enter your new 4-digit PIN:";
                 break;
 
-            // ── Top Up: validate amount, show confirmation screen ─────────
+            // ── Top Up: validate amount, show confirmation screen 
             case '4':
                 if (!is_numeric($input3)) {
                     $response  = "END Invalid amount entered.\n";
                     $response .= "Please enter a numeric amount\n";
                     $response .= "and dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);  
                     break;
                 }
 
@@ -626,7 +620,7 @@ switch ($step) {
                     $response  = "END Amount too low.\n";
                     $response .= "Minimum top-up is GHS 10.00.\n";
                     $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);   
                     break;
                 }
 
@@ -634,7 +628,7 @@ switch ($step) {
                     $response  = "END Amount too high.\n";
                     $response .= "Maximum top-up is GHS 5,000.\n";
                     $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);   
                     break;
                 }
 
@@ -654,7 +648,7 @@ switch ($step) {
 
             default:
                 $response = "END Invalid session state. Please dial again.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);  
                 break;
         }
         break;
@@ -665,19 +659,18 @@ switch ($step) {
     // Branch on T1:
     //   T1 = '3' → Change PIN: new PIN submitted (validate, prompt confirm)
     //   T1 = '4' → Top Up: confirmation choice entered (1=yes, 2=cancel)
-    // T2 is read from session (no $text parsing needed)
     // ════════════════════════════════════════════════════════════════════════
     case 4:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
-        $menuChoice = getSessionField($sessionId, 'T1');            // ← replaces: $textArray[1]
-        $input3     = getSessionField($sessionId, 'T2');            // ← replaces: $textArray[2]
-        $input4     = $data;                                        // ← replaces: $textArray[3]
+        $studentId  = getSessionField($sessionId, 'student_id');   
+        $menuChoice = getSessionField($sessionId, 'T1');          
+        $input3     = getSessionField($sessionId, 'T2');            
+        $input4     = $data;                                        
 
         $student = getStudent($studentId);
 
         if (!$student) {
             $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionId);   
             break;
         }
 
@@ -689,7 +682,7 @@ switch ($step) {
                     $response  = "END Invalid PIN format.\n";
                     $response .= "New PIN must be exactly 4 digits.\n";
                     $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);   
                     break;
                 }
 
@@ -699,7 +692,7 @@ switch ($step) {
                     $response .= "as your current PIN.\n";
                     $response .= "Please dial again with a\n";
                     $response .= "different PIN.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);   
                     break;
                 }
 
@@ -711,7 +704,7 @@ switch ($step) {
                 $response .= "Re-enter new PIN to confirm:";
                 break;
 
-            // ── Top Up: process confirmation choice ───────────────────────
+            // ── Top Up: process confirmation choice 
             case '4':
                 $amount  = (float) $input3;   // ← amount was stored in T2 at step 3
                 $confirm = $input4;
@@ -741,12 +734,12 @@ switch ($step) {
                     $response .= "Please dial again.";
                 }
 
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);   
                 break;
 
             default:
                 $response = "END Invalid session state. Please dial again.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);  
                 break;
         }
         break;
@@ -757,28 +750,28 @@ switch ($step) {
     // T1='3'  T2=currentPIN  T3=newPIN  $data=confirmPIN
     // ════════════════════════════════════════════════════════════════════════
     case 5:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
+        $studentId  = getSessionField($sessionId, 'student_id');   
         $menuChoice = getSessionField($sessionId, 'T1');            // must be '3'
-        $newPin     = getSessionField($sessionId, 'T3');            // ← replaces: $textArray[3]
-        $confirmPin = $data;                                        // ← replaces: $textArray[4]
+        $newPin     = getSessionField($sessionId, 'T3');            
+        $confirmPin = $data;                                        
 
         $student = getStudent($studentId);
 
         if (!$student) {
             $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionId);   
             break;
         }
 
         switch ($menuChoice) {
 
-            // ── Change PIN: match new PIN against its confirmation ─────────
+            // ── Change PIN: match new PIN against its confirmation 
             case '3':
                 if (!preg_match('/^\d{4}$/', $confirmPin)) {
                     $response  = "END Invalid PIN format.\n";
                     $response .= "Confirmation PIN must be 4 digits.\n";
                     $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);  
                     break;
                 }
 
@@ -786,7 +779,7 @@ switch ($step) {
                     $response  = "END PINs do not match.\n";
                     $response .= "Please dial again and enter\n";
                     $response .= "the same PIN in both steps.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionId);   
                     break;
                 }
 
@@ -799,12 +792,12 @@ switch ($step) {
                 $response .= "New PIN expires at midnight.\n";
                 $response .= "--------------------------------\n";
                 $response .= "Thank you, " . $student['name'] . "!";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);  
                 break;
 
             default:
                 $response = "END Invalid session state. Please dial again.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionId);   
                 break;
         }
         break;
@@ -816,7 +809,7 @@ switch ($step) {
     default:
         $response  = "END Session limit reached.\n";
         $response .= "Please dial again to start over.";
-        clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+        clearSession($sessionId);   
         break;
 }
 
