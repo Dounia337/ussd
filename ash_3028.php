@@ -20,7 +20,7 @@ $message = "Welcome to Ashesi University Demo\r\n1. Proceed\r\n2. Exit";
 
 $continueFlag = 0;
 
-               echo json_encode([
+    echo json_encode([
 
     'msisdn' => (string) $msisdn,
 
