@@ -1,31 +1,54 @@
 <?php
 
 /**
- * index.php  (Session-Refactored)
+ * index.php  (Gateway-Compatible Version)
  * Ashesi University Meal Plan USSD System.
  *
- * ── What changed from the text-level version ────────────────────────────────
- *  OLD: switch ($level)  where $level = count(explode('*', $text))
- *  NEW: switch ($step)   where $step  = sessionManager($sessionId)
+ * ── Why the previous version did not work ───────────────────────────────────
  *
- *  The accumulated `text` string is only used to extract the single latest
- *  user input ($data = last element after splitting on '*').
- *  Flow control is driven entirely by the `current_step` stored in the
- *  `ussd_sessions` DB table, keyed on $sessionId.
+ *  The gateway this system runs on sends and expects a DIFFERENT format
+ *  from Africa's Talking (which the previous version was written for).
  *
- * ── Session field mapping ────────────────────────────────────────────────────
- *  current_step  │ Meaning
- *  ─────────────────────────────────────────────────────────────────────────
- *       0        │ New session – welcome screen shown, step advanced to 1
- *       1        │ Student ID received – validated, main menu shown
- *       2        │ Main menu choice stored in T1 – sub-screen shown
- *       3        │ First sub-input stored in T2 – next prompt shown
- *       4        │ Second sub-input stored in T3 – final confirmation shown
- *  (deleted)     │ Session row cleared after every END response
+ *  GATEWAY CONTRACT (matches the class trial/demo code):
  *
- *  T1  = main menu choice     ('1' | '2' | '3' | '4')
- *  T2  = 1st sub-input        (current PIN  OR  top-up amount)
- *  T3  = 2nd sub-input        (new PIN candidate)
+ *  INPUT  (POST fields the gateway sends to this script):
+ *    msisdn      → the caller's phone number
+ *    sequenceID  → unique session identifier  (used as session key)
+ *    data        → the single input the user just typed
+ *    network     → network code (MTN, Vodafone, etc.)
+ *
+ *  OUTPUT (JSON this script must echo back):
+ *    {
+ *      "msisdn"      : "233XXXXXXXXX",
+ *      "sequenceID"  : "abc123",
+ *      "timestamp"   : "20240411120000",
+ *      "message"     : "Your screen text here",
+ *      "continueFlag": 0   ← 0 = show screen and wait  (was "CON ")
+ *                          ← 1 = show screen and end   (was "END ")
+ *    }
+ *
+ * ── What changed from the Africa's Talking version ──────────────────────────
+ *  OLD header : Content-Type: text/plain
+ *  NEW header : Content-Type: application/json
+ *
+ *  OLD input  : $_POST['sessionId'], $_POST['phoneNumber'], $_POST['text']
+ *  NEW input  : $_POST['sequenceID'], $_POST['msisdn'],     $_POST['data']
+ *
+ *  OLD session key : $sessionId   (from 'sessionId' POST field)
+ *  NEW session key : $sequenceID  (from 'sequenceID' POST field)
+ *
+ *  OLD $data extraction : end(explode('*', $_POST['text']))
+ *  NEW $data            : $_POST['data']  directly (gateway sends only latest input)
+ *
+ *  OLD response : echo "CON Welcome...\n1. Option"
+ *  NEW response : echo json_encode(['message'=>'Welcome...\n1. Option', 'continueFlag'=>0])
+ *
+ *  OLD end     : echo "END Thank you"
+ *  NEW end     : echo json_encode(['message'=>'Thank you', 'continueFlag'=>1])
+ *
+ * ── Everything else is identical ────────────────────────────────────────────
+ *  Session table, step logic, T1/T2/T3 fields, all business rules,
+ *  and every screen message are unchanged.
  * ────────────────────────────────────────────────────────────────────────────
  */
 
@@ -33,42 +56,82 @@ require_once 'db.php';
 
 error_reporting(0);
 date_default_timezone_set('GMT');
-header('Content-Type: text/plain');
+
+// ── FIXED: gateway expects JSON, not plain text ──────────────────────────────
+header('Content-Type: application/json');
 
 
 // ════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — READ GATEWAY INPUT PARAMETERS
+//
+// These field names MUST match what the gateway actually POSTs.
+// Mismatched names cause empty variables and broken session logic.
 // ════════════════════════════════════════════════════════════════════════════
 
-$sessionId   = isset($_POST['sessionId'])   ? trim($_POST['sessionId'])   : '';
-$serviceCode = isset($_POST['serviceCode']) ? trim($_POST['serviceCode']) : '';
-$phoneNumber = isset($_POST['phoneNumber']) ? trim($_POST['phoneNumber']) : '';
-$text        = isset($_POST['text'])        ? trim($_POST['text'])        : '';
+// ── FIXED: was $_POST['sessionId']   → correct field is 'sequenceID' ────────
+$sequenceID = isset($_POST['sequenceID']) ? trim($_POST['sequenceID']) : '';
 
-// ── Extract only the latest single user input ────────────────────────────────
-// `text` from Africa's Talking accumulates all inputs separated by '*'.
-// We split ONLY to grab the last entry — the input the user just typed.
-// The array length is NOT used to determine step (that is done via DB below).
-$textArray = ($text === '') ? [] : explode('*', $text);
-$data      = !empty($textArray) ? end($textArray) : '';   // current user input
+// ── FIXED: was $_POST['phoneNumber'] → correct field is 'msisdn' ────────────
+$msisdn     = isset($_POST['msisdn'])     ? trim($_POST['msisdn'])     : '';
+
+// ── FIXED: was $_POST['text'] with explode/end() → gateway sends 'data' directly
+// The gateway sends only the latest user input — no accumulation, no splitting needed.
+$data       = isset($_POST['data'])       ? trim($_POST['data'])       : '';
+
+$network    = isset($_POST['network'])    ? trim($_POST['network'])    : '';
+$timestamp  = date('YmdHis');
+
+// Use sequenceID as the session key throughout (was: $sessionId)
+$sessionKey = $sequenceID;
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 2 — SESSION MANAGEMENT FUNCTIONS  (class-demo style)
+// SECTION 2 — RESPONSE HELPERS
+//
+// Replaces the "CON "/"END " prefix pattern with JSON + continueFlag.
+// Call respond() instead of setting $response and echoing at the end.
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * respond()
+ * Builds and echoes the JSON response the gateway expects, then exits.
+ *
+ * @param  string $message       Screen text to display to the user
+ * @param  int    $continueFlag  0 = keep session open (was CON)
+ *                               1 = close session     (was END)
+ * @param  string $msisdn        Caller's phone number (echoed back)
+ * @param  string $sequenceID    Session ID (echoed back)
+ * @param  string $timestamp     Request timestamp
+ */
+function respond($message, $continueFlag, $msisdn, $sequenceID, $timestamp)
+{
+    // ── FIXED: was  echo $response  (plain text)
+    // ── NOW:   echo json_encode(...)
+    echo json_encode([
+        'msisdn'       => (string) $msisdn,
+        'sequenceID'   => (string) $sequenceID,
+        'timestamp'    => (string) $timestamp,
+        'message'      => (string) $message,
+        'continueFlag' => (int)    $continueFlag,
+    ]);
+    exit();
+}
+
+// Shorthand constants for continueFlag values — improve readability
+define('CONTINUE_SESSION', 0);   // was: "CON " prefix
+define('END_SESSION',      1);   // was: "END " prefix
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// SECTION 3 — SESSION MANAGEMENT FUNCTIONS  (class-demo style, unchanged)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
  * sessionManager()
- * Looks up the ussd_sessions record for $sessionId and returns current_step.
- * Returns 0 if no record exists — i.e., this is a brand-new session.
- *
- * Mirrors the class demo's sessionManager(), which returned the count of
- * filled T-columns. Here we store the step number explicitly in the DB.
- *
- * @param  string $sessionId  — unique ID provided by the USSD gateway
- * @return int    current_step (0 = no session / new)
+ * Returns current_step from ussd_sessions for $sessionKey.
+ * Returns 0 if no row exists (new session).
  */
-function sessionManager($sessionId)
+function sessionManager($sessionKey)
 {
     $conn = getDBConnection();
     $stmt = $conn->prepare(
@@ -77,34 +140,28 @@ function sessionManager($sessionId)
          WHERE  session_id = ?
          LIMIT  1"
     );
-    $stmt->bind_param('s', $sessionId);
+    $stmt->bind_param('s', $sessionKey);
     $stmt->execute();
     $result = $stmt->get_result();
     $row    = $result->fetch_assoc();
     $stmt->close();
     $conn->close();
 
-    // No record → treat as step 0 (fresh dial)
     return $row ? (int) $row['current_step'] : 0;
 }
 
 /**
  * createSession()
- * Inserts a new row in ussd_sessions at step 0 for this $sessionId.
- * Uses INSERT IGNORE so a duplicate dial never causes an error.
- * Mirrors the class demo's IdentifyUser().
- *
- * @param  string $sessionId
- * @return void
+ * Inserts a new session row at step 0.
  */
-function createSession($sessionId)
+function createSession($sessionKey)
 {
     $conn = getDBConnection();
     $stmt = $conn->prepare(
         "INSERT IGNORE INTO ussd_sessions (session_id, current_step)
          VALUES (?, 0)"
     );
-    $stmt->bind_param('s', $sessionId);
+    $stmt->bind_param('s', $sessionKey);
     $stmt->execute();
     $stmt->close();
     $conn->close();
@@ -112,36 +169,27 @@ function createSession($sessionId)
 
 /**
  * advanceSession()
- * Increments current_step by 1 and optionally writes a value into T1, T2, or T3.
- * Called after each valid user input to move the session forward.
- * Mirrors the class demo's UpdateTransactionType() + step counter combined.
- *
- * @param  string      $sessionId
- * @param  string|null $tCol    Which column to populate: 'T1', 'T2', or 'T3'
- * @param  string|null $tValue  The value to store in that column
- * @return void
+ * Increments current_step by 1 and optionally writes a T-column value.
  */
-function advanceSession($sessionId, $tCol = null, $tValue = null)
+function advanceSession($sessionKey, $tCol = null, $tValue = null)
 {
     $allowed = ['T1', 'T2', 'T3'];
     $conn    = getDBConnection();
 
     if ($tCol !== null && in_array($tCol, $allowed, true)) {
-        // Advance step AND store a T-column value in one atomic query
         $sql  = "UPDATE ussd_sessions
                  SET    current_step = current_step + 1,
                         `{$tCol}`    = ?
                  WHERE  session_id   = ?";
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param('ss', $tValue, $sessionId);
+        $stmt->bind_param('ss', $tValue, $sessionKey);
     } else {
-        // Advance step only (no T-column to update)
         $stmt = $conn->prepare(
             "UPDATE ussd_sessions
              SET    current_step = current_step + 1
              WHERE  session_id   = ?"
         );
-        $stmt->bind_param('s', $sessionId);
+        $stmt->bind_param('s', $sessionKey);
     }
 
     $stmt->execute();
@@ -151,14 +199,9 @@ function advanceSession($sessionId, $tCol = null, $tValue = null)
 
 /**
  * setStudentOnSession()
- * Stores the validated student_id on the session row.
- * Called once at step 1 so all later steps can read it without re-parsing text.
- *
- * @param  string $sessionId
- * @param  string $studentId
- * @return void
+ * Writes the validated student_id to the session row.
  */
-function setStudentOnSession($sessionId, $studentId)
+function setStudentOnSession($sessionKey, $studentId)
 {
     $conn = getDBConnection();
     $stmt = $conn->prepare(
@@ -166,7 +209,7 @@ function setStudentOnSession($sessionId, $studentId)
          SET    student_id = ?
          WHERE  session_id = ?"
     );
-    $stmt->bind_param('ss', $studentId, $sessionId);
+    $stmt->bind_param('ss', $studentId, $sessionKey);
     $stmt->execute();
     $stmt->close();
     $conn->close();
@@ -174,14 +217,9 @@ function setStudentOnSession($sessionId, $studentId)
 
 /**
  * getSessionField()
- * Reads a single named field from the session row.
- * Mirrors the class demo's GetTransactionType().
- *
- * @param  string $sessionId
- * @param  string $field  One of: 'student_id' | 'T1' | 'T2' | 'T3'
- * @return string|null
+ * Reads one field from the session row (student_id, T1, T2, or T3).
  */
-function getSessionField($sessionId, $field)
+function getSessionField($sessionKey, $field)
 {
     $allowed = ['student_id', 'T1', 'T2', 'T3'];
 
@@ -196,7 +234,7 @@ function getSessionField($sessionId, $field)
          WHERE  session_id = ?
          LIMIT  1"
     );
-    $stmt->bind_param('s', $sessionId);
+    $stmt->bind_param('s', $sessionKey);
     $stmt->execute();
     $result = $stmt->get_result();
     $row    = $result->fetch_assoc();
@@ -208,20 +246,16 @@ function getSessionField($sessionId, $field)
 
 /**
  * clearSession()
- * Deletes the session row for $sessionId from ussd_sessions.
- * Must be called before every END response — matches class demo's clearSession().
- *
- * @param  string $sessionId
- * @return void
+ * Deletes the session row. Called before every END response.
  */
-function clearSession($sessionId)
+function clearSession($sessionKey)
 {
     $conn = getDBConnection();
     $stmt = $conn->prepare(
         "DELETE FROM ussd_sessions
          WHERE  session_id = ?"
     );
-    $stmt->bind_param('s', $sessionId);
+    $stmt->bind_param('s', $sessionKey);
     $stmt->execute();
     $stmt->close();
     $conn->close();
@@ -229,13 +263,9 @@ function clearSession($sessionId)
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 3 — STUDENT / BUSINESS LOGIC FUNCTIONS  (unchanged from v1)
+// SECTION 4 — STUDENT / BUSINESS LOGIC FUNCTIONS  (completely unchanged)
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Validates an 8-digit Ashesi student ID.
- * Last 4 digits must be a year group between 2020 and 2035.
- */
 function validateStudentID($studentId)
 {
     if (!preg_match('/^\d{8}$/', $studentId)) {
@@ -245,10 +275,6 @@ function validateStudentID($studentId)
     return ($yearGroup >= 2020 && $yearGroup <= 2035);
 }
 
-/**
- * Fetches a student from the DB by student_id.
- * Transparently resets the daily balance if a new day has started.
- */
 function getStudent($studentId)
 {
     $conn = getDBConnection();
@@ -273,9 +299,6 @@ function getStudent($studentId)
     return resetDailyBalanceIfNeeded($student);
 }
 
-/**
- * Resets daily_balance to 90 GHS if last_reset_date is before today.
- */
 function resetDailyBalanceIfNeeded($student)
 {
     $today = date('Y-m-d');
@@ -300,9 +323,6 @@ function resetDailyBalanceIfNeeded($student)
     return $student;
 }
 
-/**
- * Returns true if $pin matches the stored PIN and has not yet expired.
- */
 function validatePIN($studentId, $pin)
 {
     $conn = getDBConnection();
@@ -332,10 +352,6 @@ function validatePIN($studentId, $pin)
     return true;
 }
 
-/**
- * Generates a 4-digit PIN, saves it with midnight expiry, returns the PIN.
- * PIN is displayed on-screen because email is not implemented.
- */
 function generateAndStorePIN($studentId)
 {
     $pin    = str_pad((string) rand(0, 9999), 4, '0', STR_PAD_LEFT);
@@ -356,9 +372,6 @@ function generateAndStorePIN($studentId)
     return $pin;
 }
 
-/**
- * Writes a new PIN (with fresh midnight expiry) to the students table.
- */
 function updatePIN($studentId, $newPin)
 {
     $expiry = date('Y-m-d') . ' 23:59:59';
@@ -379,9 +392,6 @@ function updatePIN($studentId, $newPin)
     return $affected > 0;
 }
 
-/**
- * Adds $amount to the student's total_balance (simulated payment).
- */
 function topUpBalance($studentId, $amount)
 {
     $conn = getDBConnection();
@@ -399,9 +409,6 @@ function topUpBalance($studentId, $amount)
     return $affected > 0;
 }
 
-/**
- * Formats a GHS amount for USSD display.
- */
 function formatGHS($amount)
 {
     return 'GHS ' . number_format((float) $amount, 2);
@@ -409,421 +416,525 @@ function formatGHS($amount)
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// SECTION 4 — DETERMINE CURRENT SESSION STEP  ← KEY CHANGE
+// SECTION 5 — MAIN USSD FLOW
 //
-// sessionManager() queries ussd_sessions using $sessionId as the key.
-// The returned integer drives the switch below.
-// This completely replaces: $level = count(explode('*', $text))
+// Flow control is driven by current_step from ussd_sessions (unchanged).
+// The only change inside each case is how the response is sent:
+//   OLD: $response = "CON ..."  then  echo $response
+//   NEW: respond("...", CONTINUE_SESSION, ...)
+//
+//   OLD: $response = "END ..."  then  clearSession()  then  echo $response
+//   NEW: clearSession()  then  respond("...", END_SESSION, ...)
 // ════════════════════════════════════════════════════════════════════════════
 
-$step     = sessionManager($sessionId);   // ← replaces: $level = count($textArray)
-$response = '';
-
+$step = sessionManager($sessionKey);
 
 switch ($step) {
 
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 0 — New session: show welcome screen, prompt for Student ID
-    // Mirrors demo case 0: create the session row then show welcome
+    // STEP 0 — New session: show welcome screen
     // ════════════════════════════════════════════════════════════════════════
     case 0:
-        createSession($sessionId);    // ← INSERT INTO ussd_sessions
-        advanceSession($sessionId);   // ← current_step 0 → 1
+        createSession($sessionKey);
+        advanceSession($sessionKey);
 
-        $response  = "Welcome to Ashesi Meal Plan\n";
-        $response .= "--------------------------------\n";
-        $response .= "Please enter your Student ID:";
+        // ── FIXED: was  $response = "CON Welcome..."  echo $response
+        respond(
+            "Welcome to Ashesi Meal Plan\r\n" .
+            "--------------------------------\r\n" .
+            "Please enter your Student ID:",
+            CONTINUE_SESSION,   // 0 — keep session open
+            $msisdn, $sequenceID, $timestamp
+        );
         break;
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 1 — Student ID received: validate and show main menu
-    // $data = the student ID the user just typed
+    // STEP 1 — Student ID received
     // ════════════════════════════════════════════════════════════════════════
     case 1:
-        $studentId = $data;   // ← replaces: $studentId = $textArray[0]
+        $studentId = $data;
 
         if (!validateStudentID($studentId)) {
-            $response  = "END Invalid Student ID.\n";
-            $response .= "ID must be 8 digits.\n";
-            $response .= "Last 4 digits = year group.\n";
-            $response .= "Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionKey);
+            // ── FIXED: was  $response = "END ..."  echo $response
+            respond(
+                "Invalid Student ID.\r\n" .
+                "ID must be 8 digits.\r\n" .
+                "Last 4 digits = year group.\r\n" .
+                "Please dial again.",
+                END_SESSION,   // 1 — close session
+                $msisdn, $sequenceID, $timestamp
+            );
             break;
         }
 
         $student = getStudent($studentId);
 
         if (!$student) {
-            $response  = "END Student ID not found.\n";
-            $response .= "Please contact the Registrar\n";
-            $response .= "or dial again with a valid ID.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionKey);
+            respond(
+                "Student ID not found.\r\n" .
+                "Please contact the Registrar\r\n" .
+                "or dial again with a valid ID.",
+                END_SESSION,
+                $msisdn, $sequenceID, $timestamp
+            );
             break;
         }
 
-        // Persist validated student_id on session row for all future steps
-        setStudentOnSession($sessionId, $studentId);   // ← UPDATE ussd_sessions SET student_id
-        advanceSession($sessionId);                    // ← current_step 1 → 2
+        setStudentOnSession($sessionKey, $studentId);
+        advanceSession($sessionKey);
 
-        $response  = "Welcome, " . $student['name'] . "!\n";
-        $response .= "================================\n";
-        $response .= "MAIN MENU\n";
-        $response .= "--------------------------------\n";
-        $response .= "1. Check Balance\n";
-        $response .= "2. Request PIN\n";
-        $response .= "3. Change PIN\n";
-        $response .= "4. Top Up Meal Plan\n";
-        $response .= "0. Exit";
+        respond(
+            "Welcome, " . $student['name'] . "!\r\n" .
+            "================================\r\n" .
+            "MAIN MENU\r\n" .
+            "--------------------------------\r\n" .
+            "1. Check Balance\r\n" .
+            "2. Request PIN\r\n" .
+            "3. Change PIN\r\n" .
+            "4. Top Up Meal Plan\r\n" .
+            "0. Exit",
+            CONTINUE_SESSION,
+            $msisdn, $sequenceID, $timestamp
+        );
         break;
 
 
     // ════════════════════════════════════════════════════════════════════════
     // STEP 2 — Main menu choice received
-    // $data = the digit the user pressed (1, 2, 3, 4, or 0)
-    // student_id is read from ussd_sessions — not from $text
     // ════════════════════════════════════════════════════════════════════════
     case 2:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
-        $menuChoice = $data;                                        // ← replaces: $textArray[1]
+        $studentId  = getSessionField($sessionKey, 'student_id');
+        $menuChoice = $data;
 
         $student = getStudent($studentId);
 
         if (!$student) {
-            $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionKey);
+            respond(
+                "Session expired. Please dial again.",
+                END_SESSION,
+                $msisdn, $sequenceID, $timestamp
+            );
             break;
         }
 
         switch ($menuChoice) {
 
-            // ── 1. Check Balance ─────────────────────────────────────────
-            case '1':
-                $response  = "END Meal Plan Balance\n";
-                $response .= "================================\n";
-                $response .= "Name  : " . $student['name'] . "\n";
-                $response .= "ID    : " . $student['student_id'] . "\n";
-                $response .= "--------------------------------\n";
-                $response .= "Total : " . formatGHS($student['total_balance']) . "\n";
-                $response .= "Daily : " . formatGHS($student['daily_balance']) . "\n";
-                $response .= "--------------------------------\n";
-                $response .= "Daily balance resets at midnight.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            case '1':   // Check Balance
+                clearSession($sessionKey);
+                respond(
+                    "Meal Plan Balance\r\n" .
+                    "================================\r\n" .
+                    "Name  : " . $student['name'] . "\r\n" .
+                    "ID    : " . $student['student_id'] . "\r\n" .
+                    "--------------------------------\r\n" .
+                    "Total : " . formatGHS($student['total_balance']) . "\r\n" .
+                    "Daily : " . formatGHS($student['daily_balance']) . "\r\n" .
+                    "--------------------------------\r\n" .
+                    "Daily balance resets at midnight.",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
-            // ── 2. Request PIN ───────────────────────────────────────────
-            case '2':
+            case '2':   // Request PIN
                 $pin = generateAndStorePIN($studentId);
-                $response  = "END PIN Request Successful!\n";
-                $response .= "================================\n";
-                $response .= "Your PIN : " . $pin . "\n";
-                $response .= "Expires  : Midnight today\n";
-                $response .= "--------------------------------\n";
-                $response .= "Keep this PIN private.\n";
-                $response .= "Do not share with anyone.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionKey);
+                respond(
+                    "PIN Request Successful!\r\n" .
+                    "================================\r\n" .
+                    "Your PIN : " . $pin . "\r\n" .
+                    "Expires  : Midnight today\r\n" .
+                    "--------------------------------\r\n" .
+                    "Keep this PIN private.\r\n" .
+                    "Do not share with anyone.",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
-            // ── 3. Change PIN — store choice, prompt for current PIN ─────
-            case '3':
-                // Store T1 = '3' so step 3 knows which branch it is in
-                advanceSession($sessionId, 'T1', '3');   // ← UPDATE T1='3', step 2→3
-
-                $response  = "CON Change PIN\n";
-                $response .= "--------------------------------\n";
-                $response .= "Enter your current 4-digit PIN:";
+            case '3':   // Change PIN — prompt for current PIN
+                advanceSession($sessionKey, 'T1', '3');
+                respond(
+                    "Change PIN\r\n" .
+                    "--------------------------------\r\n" .
+                    "Enter your current 4-digit PIN:",
+                    CONTINUE_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
-            // ── 4. Top Up — store choice, prompt for amount ──────────────
-            case '4':
-                // Store T1 = '4' so step 3 knows which branch it is in
-                advanceSession($sessionId, 'T1', '4');   // ← UPDATE T1='4', step 2→3
-
-                $response  = "CON Top Up Meal Plan\n";
-                $response .= "--------------------------------\n";
-                $response .= "Current Balance:\n";
-                $response .= formatGHS($student['total_balance']) . "\n";
-                $response .= "--------------------------------\n";
-                $response .= "Enter amount to top up (GHS):\n";
-                $response .= "(Min: 10 | Max: 5,000)";
+            case '4':   // Top Up — prompt for amount
+                advanceSession($sessionKey, 'T1', '4');
+                respond(
+                    "Top Up Meal Plan\r\n" .
+                    "--------------------------------\r\n" .
+                    "Current Balance:\r\n" .
+                    formatGHS($student['total_balance']) . "\r\n" .
+                    "--------------------------------\r\n" .
+                    "Enter amount to top up (GHS):\r\n" .
+                    "(Min: 10 | Max: 5,000)",
+                    CONTINUE_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
-            // ── 0. Exit ──────────────────────────────────────────────────
-            case '0':
-                $response  = "END Thank you, " . $student['name'] . "!\n";
-                $response .= "Have a great day at Ashesi.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            case '0':   // Exit
+                clearSession($sessionKey);
+                respond(
+                    "Thank you, " . $student['name'] . "!\r\n" .
+                    "Have a great day at Ashesi.",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
             default:
-                $response  = "END Invalid option selected.\n";
-                $response .= "Please dial again and choose\n";
-                $response .= "a valid menu option.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionKey);
+                respond(
+                    "Invalid option selected.\r\n" .
+                    "Please dial again and choose\r\n" .
+                    "a valid menu option.",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
         }
         break;
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 3 — First sub-screen input received
-    // Branch on T1 to know which menu path is active:
-    //   T1 = '3' → Change PIN: user entered their current PIN
-    //   T1 = '4' → Top Up: user entered the amount to top up
+    // STEP 3 — First sub-screen input
+    // T1='3' → Change PIN (current PIN entered)
+    // T1='4' → Top Up (amount entered)
     // ════════════════════════════════════════════════════════════════════════
     case 3:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
-        $menuChoice = getSessionField($sessionId, 'T1');            // ← replaces: $textArray[1]
-        $input3     = $data;                                        // ← replaces: $textArray[2]
+        $studentId  = getSessionField($sessionKey, 'student_id');
+        $menuChoice = getSessionField($sessionKey, 'T1');
+        $input3     = $data;
 
         $student = getStudent($studentId);
 
         if (!$student) {
-            $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionKey);
+            respond(
+                "Session expired. Please dial again.",
+                END_SESSION,
+                $msisdn, $sequenceID, $timestamp
+            );
             break;
         }
 
         switch ($menuChoice) {
 
-            // ── Change PIN: validate current PIN, prompt for new PIN ──────
-            case '3':
+            case '3':   // Change PIN: validate current PIN
                 if (!preg_match('/^\d{4}$/', $input3)) {
-                    $response  = "END Invalid PIN format.\n";
-                    $response .= "PIN must be exactly 4 digits.\n";
-                    $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "Invalid PIN format.\r\n" .
+                        "PIN must be exactly 4 digits.\r\n" .
+                        "Please dial again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
                 if (!validatePIN($studentId, $input3)) {
-                    $response  = "END Incorrect PIN or PIN expired.\n";
-                    $response .= "Please request a new PIN first\n";
-                    $response .= "then try again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "Incorrect PIN or PIN expired.\r\n" .
+                        "Please request a new PIN first\r\n" .
+                        "then try again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
-                // Current PIN verified — store it in T2, advance to step 4
-                advanceSession($sessionId, 'T2', $input3);   // ← UPDATE T2=currentPIN, step 3→4
-
-                $response  = "CON PIN verified successfully.\n";
-                $response .= "--------------------------------\n";
-                $response .= "Enter your new 4-digit PIN:";
+                advanceSession($sessionKey, 'T2', $input3);
+                respond(
+                    "PIN verified successfully.\r\n" .
+                    "--------------------------------\r\n" .
+                    "Enter your new 4-digit PIN:",
+                    CONTINUE_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
-            // ── Top Up: validate amount, show confirmation screen ─────────
-            case '4':
+            case '4':   // Top Up: validate amount
                 if (!is_numeric($input3)) {
-                    $response  = "END Invalid amount entered.\n";
-                    $response .= "Please enter a numeric amount\n";
-                    $response .= "and dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "Invalid amount entered.\r\n" .
+                        "Please enter a numeric amount\r\n" .
+                        "and dial again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
                 $amount = (float) $input3;
 
                 if ($amount < 10) {
-                    $response  = "END Amount too low.\n";
-                    $response .= "Minimum top-up is GHS 10.00.\n";
-                    $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "Amount too low.\r\n" .
+                        "Minimum top-up is GHS 10.00.\r\n" .
+                        "Please dial again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
                 if ($amount > 5000) {
-                    $response  = "END Amount too high.\n";
-                    $response .= "Maximum top-up is GHS 5,000.\n";
-                    $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "Amount too high.\r\n" .
+                        "Maximum top-up is GHS 5,000.\r\n" .
+                        "Please dial again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
-                // Amount validated — store it in T2, advance to step 4
-                advanceSession($sessionId, 'T2', (string) $amount);   // ← UPDATE T2=amount, step 3→4
+                advanceSession($sessionKey, 'T2', (string) $amount);
 
                 $newBalance = (float) $student['total_balance'] + $amount;
-                $response   = "CON Confirm Top Up\n";
-                $response  .= "================================\n";
-                $response  .= "Amount  : " . formatGHS($amount) . "\n";
-                $response  .= "Current : " . formatGHS($student['total_balance']) . "\n";
-                $response  .= "After   : " . formatGHS($newBalance) . "\n";
-                $response  .= "--------------------------------\n";
-                $response  .= "1. Confirm\n";
-                $response  .= "2. Cancel";
+                respond(
+                    "Confirm Top Up\r\n" .
+                    "================================\r\n" .
+                    "Amount  : " . formatGHS($amount) . "\r\n" .
+                    "Current : " . formatGHS($student['total_balance']) . "\r\n" .
+                    "After   : " . formatGHS($newBalance) . "\r\n" .
+                    "--------------------------------\r\n" .
+                    "1. Confirm\r\n" .
+                    "2. Cancel",
+                    CONTINUE_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
             default:
-                $response = "END Invalid session state. Please dial again.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionKey);
+                respond(
+                    "Invalid session state. Please dial again.",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
         }
         break;
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 4 — Second sub-screen input received
-    // Branch on T1:
-    //   T1 = '3' → Change PIN: new PIN submitted (validate, prompt confirm)
-    //   T1 = '4' → Top Up: confirmation choice entered (1=yes, 2=cancel)
-    // T2 is read from session (no $text parsing needed)
+    // STEP 4 — Second sub-screen input
+    // T1='3' → Change PIN (new PIN entered — check it differs, prompt confirm)
+    // T1='4' → Top Up (confirmation choice: 1=yes, 2=cancel)
     // ════════════════════════════════════════════════════════════════════════
     case 4:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
-        $menuChoice = getSessionField($sessionId, 'T1');            // ← replaces: $textArray[1]
-        $input3     = getSessionField($sessionId, 'T2');            // ← replaces: $textArray[2]
-        $input4     = $data;                                        // ← replaces: $textArray[3]
+        $studentId  = getSessionField($sessionKey, 'student_id');
+        $menuChoice = getSessionField($sessionKey, 'T1');
+        $input3     = getSessionField($sessionKey, 'T2');
+        $input4     = $data;
 
         $student = getStudent($studentId);
 
         if (!$student) {
-            $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionKey);
+            respond(
+                "Session expired. Please dial again.",
+                END_SESSION,
+                $msisdn, $sequenceID, $timestamp
+            );
             break;
         }
 
         switch ($menuChoice) {
 
-            // ── Change PIN: new PIN received — check it differs, prompt confirm
-            case '3':
+            case '3':   // Change PIN: new PIN submitted
                 if (!preg_match('/^\d{4}$/', $input4)) {
-                    $response  = "END Invalid PIN format.\n";
-                    $response .= "New PIN must be exactly 4 digits.\n";
-                    $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "Invalid PIN format.\r\n" .
+                        "New PIN must be exactly 4 digits.\r\n" .
+                        "Please dial again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
-                // New PIN must differ from the current PIN (stored in T2)
                 if ($input4 === $input3) {
-                    $response  = "END New PIN cannot be the same\n";
-                    $response .= "as your current PIN.\n";
-                    $response .= "Please dial again with a\n";
-                    $response .= "different PIN.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "New PIN cannot be the same\r\n" .
+                        "as your current PIN.\r\n" .
+                        "Please dial again with a\r\n" .
+                        "different PIN.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
-                // Store new PIN candidate in T3, advance to step 5
-                advanceSession($sessionId, 'T3', $input4);   // ← UPDATE T3=newPIN, step 4→5
-
-                $response  = "CON Confirm New PIN\n";
-                $response .= "--------------------------------\n";
-                $response .= "Re-enter new PIN to confirm:";
+                advanceSession($sessionKey, 'T3', $input4);
+                respond(
+                    "Confirm New PIN\r\n" .
+                    "--------------------------------\r\n" .
+                    "Re-enter new PIN to confirm:",
+                    CONTINUE_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
-            // ── Top Up: process confirmation choice ───────────────────────
-            case '4':
-                $amount  = (float) $input3;   // ← amount was stored in T2 at step 3
+            case '4':   // Top Up: process confirmation
+                $amount  = (float) $input3;
                 $confirm = $input4;
 
                 if ($confirm === '1') {
                     topUpBalance($studentId, $amount);
                     $newBalance = (float) $student['total_balance'] + $amount;
-
-                    $response  = "END Top Up Successful!\n";
-                    $response .= "================================\n";
-                    $response .= "Name    : " . $student['name'] . "\n";
-                    $response .= "Added   : " . formatGHS($amount) . "\n";
-                    $response .= "Balance : " . formatGHS($newBalance) . "\n";
-                    $response .= "--------------------------------\n";
-                    $response .= "Payment simulated. No real\n";
-                    $response .= "funds were transferred.\n";
-                    $response .= "Thank you!";
+                    clearSession($sessionKey);
+                    respond(
+                        "Top Up Successful!\r\n" .
+                        "================================\r\n" .
+                        "Name    : " . $student['name'] . "\r\n" .
+                        "Added   : " . formatGHS($amount) . "\r\n" .
+                        "Balance : " . formatGHS($newBalance) . "\r\n" .
+                        "--------------------------------\r\n" .
+                        "Payment simulated. No real\r\n" .
+                        "funds were transferred.\r\n" .
+                        "Thank you!",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
 
                 } elseif ($confirm === '2') {
-                    $response  = "END Top Up Cancelled.\n";
-                    $response .= "Your balance remains unchanged.\n";
-                    $response .= "Dial again to restart.";
+                    clearSession($sessionKey);
+                    respond(
+                        "Top Up Cancelled.\r\n" .
+                        "Your balance remains unchanged.\r\n" .
+                        "Dial again to restart.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
 
                 } else {
-                    $response  = "END Invalid option.\n";
-                    $response .= "Top Up has been cancelled.\n";
-                    $response .= "Please dial again.";
+                    clearSession($sessionKey);
+                    respond(
+                        "Invalid option.\r\n" .
+                        "Top Up has been cancelled.\r\n" .
+                        "Please dial again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                 }
-
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
                 break;
 
             default:
-                $response = "END Invalid session state. Please dial again.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionKey);
+                respond(
+                    "Invalid session state. Please dial again.",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
         }
         break;
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // STEP 5 — PIN confirmation received (Change PIN final step only)
+    // STEP 5 — PIN confirmation (Change PIN final step)
     // T1='3'  T2=currentPIN  T3=newPIN  $data=confirmPIN
     // ════════════════════════════════════════════════════════════════════════
     case 5:
-        $studentId  = getSessionField($sessionId, 'student_id');   // ← replaces: $textArray[0]
-        $menuChoice = getSessionField($sessionId, 'T1');            // must be '3'
-        $newPin     = getSessionField($sessionId, 'T3');            // ← replaces: $textArray[3]
-        $confirmPin = $data;                                        // ← replaces: $textArray[4]
+        $studentId  = getSessionField($sessionKey, 'student_id');
+        $menuChoice = getSessionField($sessionKey, 'T1');
+        $newPin     = getSessionField($sessionKey, 'T3');
+        $confirmPin = $data;
 
         $student = getStudent($studentId);
 
         if (!$student) {
-            $response = "END Session expired. Please dial again.";
-            clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+            clearSession($sessionKey);
+            respond(
+                "Session expired. Please dial again.",
+                END_SESSION,
+                $msisdn, $sequenceID, $timestamp
+            );
             break;
         }
 
         switch ($menuChoice) {
 
-            // ── Change PIN: match new PIN against its confirmation ─────────
             case '3':
                 if (!preg_match('/^\d{4}$/', $confirmPin)) {
-                    $response  = "END Invalid PIN format.\n";
-                    $response .= "Confirmation PIN must be 4 digits.\n";
-                    $response .= "Please dial again.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "Invalid PIN format.\r\n" .
+                        "Confirmation PIN must be 4 digits.\r\n" .
+                        "Please dial again.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
                 if ($newPin !== $confirmPin) {
-                    $response  = "END PINs do not match.\n";
-                    $response .= "Please dial again and enter\n";
-                    $response .= "the same PIN in both steps.";
-                    clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                    clearSession($sessionKey);
+                    respond(
+                        "PINs do not match.\r\n" .
+                        "Please dial again and enter\r\n" .
+                        "the same PIN in both steps.",
+                        END_SESSION,
+                        $msisdn, $sequenceID, $timestamp
+                    );
                     break;
                 }
 
-                // Both entries match — commit the new PIN to the students table
                 updatePIN($studentId, $newPin);
-
-                $response  = "END PIN Changed Successfully!\n";
-                $response .= "================================\n";
-                $response .= "Your PIN has been updated.\n";
-                $response .= "New PIN expires at midnight.\n";
-                $response .= "--------------------------------\n";
-                $response .= "Thank you, " . $student['name'] . "!";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionKey);
+                respond(
+                    "PIN Changed Successfully!\r\n" .
+                    "================================\r\n" .
+                    "Your PIN has been updated.\r\n" .
+                    "New PIN expires at midnight.\r\n" .
+                    "--------------------------------\r\n" .
+                    "Thank you, " . $student['name'] . "!",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
 
             default:
-                $response = "END Invalid session state. Please dial again.";
-                clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+                clearSession($sessionKey);
+                respond(
+                    "Invalid session state. Please dial again.",
+                    END_SESSION,
+                    $msisdn, $sequenceID, $timestamp
+                );
                 break;
         }
         break;
 
 
     // ════════════════════════════════════════════════════════════════════════
-    // DEFAULT — Unexpected step (should never be reached in normal operation)
+    // DEFAULT — Unexpected step
     // ════════════════════════════════════════════════════════════════════════
     default:
-        $response  = "END Session limit reached.\n";
-        $response .= "Please dial again to start over.";
-        clearSession($sessionId);   // ← DELETE FROM ussd_sessions
+        clearSession($sessionKey);
+        respond(
+            "Session limit reached.\r\n" .
+            "Please dial again to start over.",
+            END_SESSION,
+            $msisdn, $sequenceID, $timestamp
+        );
         break;
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// SECTION 5 — SEND RESPONSE TO GATEWAY
-// ════════════════════════════════════════════════════════════════════════════
-echo $response;
+        }
