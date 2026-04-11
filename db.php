@@ -7,8 +7,8 @@
  */
 
 define('DB_HOST', 'localhost');
-define('DB_USER', 'deubaybe.dounia');        // Change to your MySQL username
-define('DB_PASS', 'Dou81387');            // Change to your MySQL password
+define('DB_USER', 'deubaybe.dounia');        
+define('DB_PASS', 'Dou81387');            
 define('DB_NAME', 'mobileapps_2026B_deubaybe_dounia');
 define('DB_PORT', 3306);
 

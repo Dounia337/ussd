@@ -430,7 +430,7 @@ switch ($step) {
         createSession($sessionId);    // ← INSERT INTO ussd_sessions
         advanceSession($sessionId);   // ← current_step 0 → 1
 
-        $response  = "CON Welcome to Ashesi Meal Plan\n";
+        $response  = "Welcome to Ashesi Meal Plan\n";
         $response .= "--------------------------------\n";
         $response .= "Please enter your Student ID:";
         break;
@@ -466,7 +466,7 @@ switch ($step) {
         setStudentOnSession($sessionId, $studentId);   // ← UPDATE ussd_sessions SET student_id
         advanceSession($sessionId);                    // ← current_step 1 → 2
 
-        $response  = "CON Welcome, " . $student['name'] . "!\n";
+        $response  = "Welcome, " . $student['name'] . "!\n";
         $response .= "================================\n";
         $response .= "MAIN MENU\n";
         $response .= "--------------------------------\n";
