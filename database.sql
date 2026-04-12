@@ -9,7 +9,7 @@
 DROP TABLE IF EXISTS students;
 
 
--- ── 3. Create the students table ────────────────────────────
+-- ── 3. Create the students table & ussd_sessions table ────────────────────────────
 CREATE TABLE students (
 
     -- Primary key
@@ -49,6 +49,52 @@ CREATE TABLE students (
   COLLATE=utf8mb4_unicode_ci
   COMMENT='Ashesi University Meal Plan — student accounts';
 
+CREATE TABLE ussd_sessions (
+ 
+    -- The unique session ID supplied by the USSD gateway on every request.
+    -- Used as the primary key — no auto-increment needed.
+    session_id      VARCHAR(100)    NOT NULL,
+ 
+    -- The student_id entered by the user at step 1.
+    -- NULL until the student has been validated.
+    student_id      VARCHAR(8)          NULL DEFAULT NULL,
+ 
+    -- Tracks which step of the dialogue the user is currently on.
+    --   0 → fresh session  (welcome screen shown)
+    --   1 → student ID entered and validated; main menu shown
+    --   2 → main menu choice stored; sub-screen shown
+    --   3 → first sub-input stored (current PIN  OR  top-up amount)
+    --   4 → second sub-input stored (new PIN  OR  top-up confirmation)
+    -- Session is deleted when an END response is sent.
+    current_step    TINYINT UNSIGNED NOT NULL DEFAULT 0,
+ 
+    -- T1: stores the main menu choice (1, 2, 3, or 4).
+    -- Set at step 2, read at steps 3, 4, and 5.
+    T1              VARCHAR(10)         NULL DEFAULT NULL,
+ 
+    -- T2: stores the first sub-screen input.
+    --   For Change PIN  → the user's current (old) PIN
+    --   For Top Up      → the top-up amount as entered
+    -- Set at step 3, read at steps 4 and 5.
+    T2              VARCHAR(20)         NULL DEFAULT NULL,
+ 
+    -- T3: stores the second sub-screen input.
+    --   For Change PIN  → the user's proposed new PIN
+    -- Set at step 4, read at step 5.
+    T3              VARCHAR(20)         NULL DEFAULT NULL,
+ 
+    -- Timestamps for debugging and expiry management.
+    created_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                             ON UPDATE CURRENT_TIMESTAMP,
+ 
+    PRIMARY KEY (session_id)
+ 
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_unicode_ci
+  COMMENT='Tracks per-request USSD session state for the Meal Plan system';
+ 
 
 -- ── 4. Insert 5 demo students ────────────────────────────────
 --  Format:  first-4 random | last-4 year-group
