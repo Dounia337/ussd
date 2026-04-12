@@ -451,13 +451,11 @@ switch ($step) {
                 clearSession($sessionKey);
                 respond(
                     "Meal Plan Balance\r\n" .
-                    "================================\r\n" .
+                    
                     "Name  : " . $student['name'] . "\r\n" .
                     "ID    : " . $student['student_id'] . "\r\n" .
-                    "--------------------------------\r\n" .
                     "Total : " . formatGHS($student['total_balance']) . "\r\n" .
                     "Daily : " . formatGHS($student['daily_balance']) . "\r\n" .
-                    "--------------------------------\r\n" .
                     "Daily balance resets at midnight.",
                     END_SESSION,
                     $msisdn, $sequenceID, $timestamp
@@ -469,10 +467,8 @@ switch ($step) {
                 clearSession($sessionKey);
                 respond(
                     "PIN Request Successful!\r\n" .
-                    "================================\r\n" .
                     "Your PIN : " . $pin . "\r\n" .
                     "Expires  : Midnight today\r\n" .
-                    "--------------------------------\r\n" .
                     "Keep this PIN private.\r\n" .
                     "Do not share with anyone.",
                     END_SESSION,
@@ -484,7 +480,6 @@ switch ($step) {
                 advanceSession($sessionKey, 'T1', '3');
                 respond(
                     "Change PIN\r\n" .
-                    "--------------------------------\r\n" .
                     "Enter your current 4-digit PIN:",
                     CONTINUE_SESSION,
                     $msisdn, $sequenceID, $timestamp
@@ -492,13 +487,12 @@ switch ($step) {
                 break;
 
             case '4':   // Top Up — prompt for amount
+
                 advanceSession($sessionKey, 'T1', '4');
                 respond(
                     "Top Up Meal Plan\r\n" .
-                    "--------------------------------\r\n" .
                     "Current Balance:\r\n" .
                     formatGHS($student['total_balance']) . "\r\n" .
-                    "--------------------------------\r\n" .
                     "Enter amount to top up (GHS):\r\n" .
                     "(Min: 10 | Max: 5,000)",
                     CONTINUE_SESSION,
@@ -529,12 +523,10 @@ switch ($step) {
         }
         break;
 
-
-    // ════════════════════════════════════════════════════════════════════════
     // STEP 3 — First sub-screen input
     // T1='3' → Change PIN (current PIN entered)
     // T1='4' → Top Up (amount entered)
-    // ════════════════════════════════════════════════════════════════════════
+   
     case 3:
         $studentId  = getSessionField($sessionKey, 'student_id');
         $menuChoice = getSessionField($sessionKey, 'T1');
