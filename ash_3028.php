@@ -698,7 +698,6 @@ switch ($step) {
                 advanceSession($sessionKey, 'T3', $input4);
                 respond(
                     "Confirm New PIN\r\n" .
-                    "--------------------------------\r\n" .
                     "Re-enter new PIN to confirm:",
                     CONTINUE_SESSION,
                     $msisdn, $sequenceID, $timestamp
@@ -715,11 +714,9 @@ switch ($step) {
                     clearSession($sessionKey);
                     respond(
                         "Top Up Successful!\r\n" .
-                        "================================\r\n" .
                         "Name    : " . $student['name'] . "\r\n" .
                         "Added   : " . formatGHS($amount) . "\r\n" .
                         "Balance : " . formatGHS($newBalance) . "\r\n" .
-                        "--------------------------------\r\n" .
                         "Payment simulated. No real\r\n" .
                         "funds were transferred.\r\n" .
                         "Thank you!",
@@ -760,11 +757,9 @@ switch ($step) {
         }
         break;
 
-
-    // ════════════════════════════════════════════════════════════════════════
     // STEP 5 — PIN confirmation (Change PIN final step)
     // T1='3'  T2=currentPIN  T3=newPIN  $data=confirmPIN
-    // ════════════════════════════════════════════════════════════════════════
+   
     case 5:
         $studentId  = getSessionField($sessionKey, 'student_id');
         $menuChoice = getSessionField($sessionKey, 'T1');
@@ -814,10 +809,8 @@ switch ($step) {
                 clearSession($sessionKey);
                 respond(
                     "PIN Changed Successfully!\r\n" .
-                    "================================\r\n" .
                     "Your PIN has been updated.\r\n" .
                     "New PIN expires at midnight.\r\n" .
-                    "--------------------------------\r\n" .
                     "Thank you, " . $student['name'] . "!",
                     END_SESSION,
                     $msisdn, $sequenceID, $timestamp
@@ -835,10 +828,7 @@ switch ($step) {
         }
         break;
 
-
-    // ════════════════════════════════════════════════════════════════════════
     // DEFAULT — Unexpected step
-    // ════════════════════════════════════════════════════════════════════════
     default:
         clearSession($sessionKey);
         respond(
