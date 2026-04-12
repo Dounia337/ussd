@@ -1,15 +1,3 @@
--- ============================================================
---  Ashesi Meal Plan USSD System — Database Setup
---  File: database.sql
---  Run this script once to create the database, table, and
---  seed it with 5 demo students.
--- ============================================================
-
--- ── 2. Drop existing table if re-running ────────────────────
-DROP TABLE IF EXISTS students;
-
-
--- ── 3. Create the students table & ussd_sessions table ────────────────────────────
 CREATE TABLE students (
 
     -- Primary key
@@ -96,7 +84,7 @@ CREATE TABLE ussd_sessions (
   COMMENT='Tracks per-request USSD session state for the Meal Plan system';
  
 
--- ── 4. Insert 5 demo students ────────────────────────────────
+-- ── 4. Insert 5 demo students 
 --  Format:  first-4 random | last-4 year-group
 --  IDs used:
 --    12342027  →  Kwame Asante          (Class of 2027)
@@ -108,7 +96,6 @@ CREATE TABLE ussd_sessions (
 --  last_reset_date is set to yesterday so the first call
 --  triggers a daily balance reset to 90.00 (demonstrates the
 --  reset logic without manual intervention).
--- ─────────────────────────────────────────────────────────────
 
 INSERT INTO students
     (student_id, name, total_balance, daily_balance, last_reset_date, pin, pin_expiry)
@@ -170,7 +157,7 @@ VALUES
     );
 
 
--- ── 5. Verify inserted data ──────────────────────────────────
+-- ── 5. Verify inserted data 
 SELECT
     student_id,
     name,

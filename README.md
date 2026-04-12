@@ -486,4 +486,4 @@ Claude (claude.ai / Claude Code by Anthropic) was used as an AI assistant during
 - Writing and formatting this README document
 - Suggesting security practices (prepared statements, field whitelisting, input validation patterns)
 
-All design decisions, the overall flow logic, and the business rules were defined by the student based on the course lab requirements and the existing Ashesi meal plan system. AI-generated code and text were reviewed, tested, and adapted before use.
+All design decisions, the overall flow logic, and the business rules were defined by me based on the course lab requirements and the existing Ashesi meal plan system.
