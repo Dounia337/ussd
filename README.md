@@ -481,7 +481,7 @@ LIMIT 10;
 
 Claude (claude.ai / Claude Code by Anthropic) was used as an AI assistant during the development of this project. Specifically, it helped with:
 
-- Structuring and writing the PHP session management functions
+- Structuring  the PHP session management functions
 - Drafting and reviewing SQL schema and seed data
 - Writing and formatting this README document
 - Suggesting security practices (prepared statements, field whitelisting, input validation patterns)
