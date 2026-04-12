@@ -1,112 +1,48 @@
 <?php
 
-/**
- * index.php  (Gateway-Compatible Version)
- * Ashesi University Meal Plan USSD System.
- *
- * ── Why the previous version did not work ───────────────────────────────────
- *
- *  The gateway this system runs on sends and expects a DIFFERENT format
- *  from Africa's Talking (which the previous version was written for).
- *
- *  GATEWAY CONTRACT (matches the class trial/demo code):
- *
- *  INPUT  (POST fields the gateway sends to this script):
- *    msisdn      → the caller's phone number
- *    sequenceID  → unique session identifier  (used as session key)
- *    data        → the single input the user just typed
- *    network     → network code (MTN, Vodafone, etc.)
- *
- *  OUTPUT (JSON this script must echo back):
- *    {
- *      "msisdn"      : "233XXXXXXXXX",
- *      "sequenceID"  : "abc123",
- *      "timestamp"   : "20240411120000",
- *      "message"     : "Your screen text here",
- *      "continueFlag": 0   ← 0 = show screen and wait  (was "CON ")
- *                          ← 1 = show screen and end   (was "END ")
- *    }
- *
- * ── What changed from the Africa's Talking version ──────────────────────────
- *  OLD header : Content-Type: text/plain
- *  NEW header : Content-Type: application/json
- *
- *  OLD input  : $_POST['sessionId'], $_POST['phoneNumber'], $_POST['text']
- *  NEW input  : $_POST['sequenceID'], $_POST['msisdn'],     $_POST['data']
- *
- *  OLD session key : $sessionId   (from 'sessionId' POST field)
- *  NEW session key : $sequenceID  (from 'sequenceID' POST field)
- *
- *  OLD $data extraction : end(explode('*', $_POST['text']))
- *  NEW $data            : $_POST['data']  directly (gateway sends only latest input)
- *
- *  OLD response : echo "CON Welcome...\n1. Option"
- *  NEW response : echo json_encode(['message'=>'Welcome...\n1. Option', 'continueFlag'=>0])
- *
- *  OLD end     : echo "END Thank you"
- *  NEW end     : echo json_encode(['message'=>'Thank you', 'continueFlag'=>1])
- *
- * ── Everything else is identical ────────────────────────────────────────────
- *  Session table, step logic, T1/T2/T3 fields, all business rules,
- *  and every screen message are unchanged.
- * ────────────────────────────────────────────────────────────────────────────
- */
+// ash_3028.php
+// Ashesi University Meal Plan USSD Application
 
 require_once 'db.php';
 
 error_reporting(0);
 date_default_timezone_set('GMT');
 
-// ── FIXED: gateway expects JSON, not plain text ──────────────────────────────
 header('Content-Type: application/json');
 
 
-// ════════════════════════════════════════════════════════════════════════════
+
 // SECTION 1 — READ GATEWAY INPUT PARAMETERS
-//
-// These field names MUST match what the gateway actually POSTs.
-// Mismatched names cause empty variables and broken session logic.
-// ════════════════════════════════════════════════════════════════════════════
 
-// ── FIXED: was $_POST['sessionId']   → correct field is 'sequenceID' ────────
+
+
 $sequenceID = isset($_POST['sequenceID']) ? trim($_POST['sequenceID']) : '';
-
-// ── FIXED: was $_POST['phoneNumber'] → correct field is 'msisdn' ────────────
 $msisdn     = isset($_POST['msisdn'])     ? trim($_POST['msisdn'])     : '';
-
-// ── FIXED: was $_POST['text'] with explode/end() → gateway sends 'data' directly
-// The gateway sends only the latest user input — no accumulation, no splitting needed.
 $data       = isset($_POST['data'])       ? trim($_POST['data'])       : '';
-
 $network    = isset($_POST['network'])    ? trim($_POST['network'])    : '';
 $timestamp  = date('YmdHis');
-
-// Use sequenceID as the session key throughout (was: $sessionId)
 $sessionKey = $sequenceID;
 
 
-// ════════════════════════════════════════════════════════════════════════════
+
 // SECTION 2 — RESPONSE HELPERS
-//
-// Replaces the "CON "/"END " prefix pattern with JSON + continueFlag.
-// Call respond() instead of setting $response and echoing at the end.
-// ════════════════════════════════════════════════════════════════════════════
 
 /**
  * respond()
  * Builds and echoes the JSON response the gateway expects, then exits.
  *
  * @param  string $message       Screen text to display to the user
- * @param  int    $continueFlag  0 = keep session open (was CON)
- *                               1 = close session     (was END)
+ * @param  int    $continueFlag  0 = keep session open 
+ *                               1 = close session    
  * @param  string $msisdn        Caller's phone number (echoed back)
  * @param  string $sequenceID    Session ID (echoed back)
  * @param  string $timestamp     Request timestamp
  */
+
+
 function respond($message, $continueFlag, $msisdn, $sequenceID, $timestamp)
 {
-    // ── FIXED: was  echo $response  (plain text)
-    // ── NOW:   echo json_encode(...)
+    
     echo json_encode([
         'msisdn'       => (string) $msisdn,
         'sequenceID'   => (string) $sequenceID,
@@ -118,19 +54,20 @@ function respond($message, $continueFlag, $msisdn, $sequenceID, $timestamp)
 }
 
 // Shorthand constants for continueFlag values — improve readability
-define('CONTINUE_SESSION', 0);   // was: "CON " prefix
-define('END_SESSION',      1);   // was: "END " prefix
+
+define('CONTINUE_SESSION', 0);   
+define('END_SESSION',      1);   
 
 
-// ════════════════════════════════════════════════════════════════════════════
-// SECTION 3 — SESSION MANAGEMENT FUNCTIONS  (class-demo style, unchanged)
-// ════════════════════════════════════════════════════════════════════════════
+
+// SECTION 3 — SESSION MANAGEMENT FUNCTIONS 
 
 /**
  * sessionManager()
  * Returns current_step from ussd_sessions for $sessionKey.
  * Returns 0 if no row exists (new session).
  */
+
 function sessionManager($sessionKey)
 {
     $conn = getDBConnection();
@@ -154,6 +91,7 @@ function sessionManager($sessionKey)
  * createSession()
  * Inserts a new session row at step 0.
  */
+
 function createSession($sessionKey)
 {
     $conn = getDBConnection();
@@ -171,6 +109,7 @@ function createSession($sessionKey)
  * advanceSession()
  * Increments current_step by 1 and optionally writes a T-column value.
  */
+
 function advanceSession($sessionKey, $tCol = null, $tValue = null)
 {
     $allowed = ['T1', 'T2', 'T3'];
@@ -201,6 +140,7 @@ function advanceSession($sessionKey, $tCol = null, $tValue = null)
  * setStudentOnSession()
  * Writes the validated student_id to the session row.
  */
+
 function setStudentOnSession($sessionKey, $studentId)
 {
     $conn = getDBConnection();
@@ -219,6 +159,7 @@ function setStudentOnSession($sessionKey, $studentId)
  * getSessionField()
  * Reads one field from the session row (student_id, T1, T2, or T3).
  */
+
 function getSessionField($sessionKey, $field)
 {
     $allowed = ['student_id', 'T1', 'T2', 'T3'];
@@ -248,6 +189,7 @@ function getSessionField($sessionKey, $field)
  * clearSession()
  * Deletes the session row. Called before every END response.
  */
+
 function clearSession($sessionKey)
 {
     $conn = getDBConnection();
@@ -261,10 +203,8 @@ function clearSession($sessionKey)
     $conn->close();
 }
 
+// SECTION 4 — STUDENT / BUSINESS LOGIC FUNCTIONS  
 
-// ════════════════════════════════════════════════════════════════════════════
-// SECTION 4 — STUDENT / BUSINESS LOGIC FUNCTIONS  (completely unchanged)
-// ════════════════════════════════════════════════════════════════════════════
 
 function validateStudentID($studentId)
 {
@@ -415,55 +355,42 @@ function formatGHS($amount)
 }
 
 
-// ════════════════════════════════════════════════════════════════════════════
 // SECTION 5 — MAIN USSD FLOW
-//
-// Flow control is driven by current_step from ussd_sessions (unchanged).
-// The only change inside each case is how the response is sent:
-//   OLD: $response = "CON ..."  then  echo $response
-//   NEW: respond("...", CONTINUE_SESSION, ...)
-//
-//   OLD: $response = "END ..."  then  clearSession()  then  echo $response
-//   NEW: clearSession()  then  respond("...", END_SESSION, ...)
-// ════════════════════════════════════════════════════════════════════════════
 
 $step = sessionManager($sessionKey);
 
 switch ($step) {
 
-    // ════════════════════════════════════════════════════════════════════════
     // STEP 0 — New session: show welcome screen
-    // ════════════════════════════════════════════════════════════════════════
+
     case 0:
         createSession($sessionKey);
         advanceSession($sessionKey);
 
-        // ── FIXED: was  $response = "CON Welcome..."  echo $response
+    
         respond(
             "Welcome to Ashesi Meal Plan\r\n" .
-            "--------------------------------\r\n" .
             "Please enter your Student ID:",
-            CONTINUE_SESSION,   // 0 — keep session open
+
+            CONTINUE_SESSION,   
             $msisdn, $sequenceID, $timestamp
         );
         break;
 
-
-    // ════════════════════════════════════════════════════════════════════════
     // STEP 1 — Student ID received
-    // ════════════════════════════════════════════════════════════════════════
+   
     case 1:
         $studentId = $data;
 
         if (!validateStudentID($studentId)) {
             clearSession($sessionKey);
-            // ── FIXED: was  $response = "END ..."  echo $response
+   
             respond(
                 "Invalid Student ID.\r\n" .
                 "ID must be 8 digits.\r\n" .
                 "Last 4 digits = year group.\r\n" .
                 "Please dial again.",
-                END_SESSION,   // 1 — close session
+                END_SESSION,  
                 $msisdn, $sequenceID, $timestamp
             );
             break;
@@ -488,9 +415,8 @@ switch ($step) {
 
         respond(
             "Welcome, " . $student['name'] . "!\r\n" .
-            "================================\r\n" .
+            
             "MAIN MENU\r\n" .
-            "--------------------------------\r\n" .
             "1. Check Balance\r\n" .
             "2. Request PIN\r\n" .
             "3. Change PIN\r\n" .
@@ -501,10 +427,8 @@ switch ($step) {
         );
         break;
 
-
-    // ════════════════════════════════════════════════════════════════════════
     // STEP 2 — Main menu choice received
-    // ════════════════════════════════════════════════════════════════════════
+
     case 2:
         $studentId  = getSessionField($sessionKey, 'student_id');
         $menuChoice = $data;
