@@ -574,7 +574,6 @@ switch ($step) {
                 advanceSession($sessionKey, 'T2', $input3);
                 respond(
                     "PIN verified successfully.\r\n" .
-                    "--------------------------------\r\n" .
                     "Enter your new 4-digit PIN:",
                     CONTINUE_SESSION,
                     $msisdn, $sequenceID, $timestamp
@@ -625,11 +624,9 @@ switch ($step) {
                 $newBalance = (float) $student['total_balance'] + $amount;
                 respond(
                     "Confirm Top Up\r\n" .
-                    "================================\r\n" .
                     "Amount  : " . formatGHS($amount) . "\r\n" .
                     "Current : " . formatGHS($student['total_balance']) . "\r\n" .
                     "After   : " . formatGHS($newBalance) . "\r\n" .
-                    "--------------------------------\r\n" .
                     "1. Confirm\r\n" .
                     "2. Cancel",
                     CONTINUE_SESSION,
@@ -648,12 +645,10 @@ switch ($step) {
         }
         break;
 
-
-    // ════════════════════════════════════════════════════════════════════════
     // STEP 4 — Second sub-screen input
     // T1='3' → Change PIN (new PIN entered — check it differs, prompt confirm)
     // T1='4' → Top Up (confirmation choice: 1=yes, 2=cancel)
-    // ════════════════════════════════════════════════════════════════════════
+
     case 4:
         $studentId  = getSessionField($sessionKey, 'student_id');
         $menuChoice = getSessionField($sessionKey, 'T1');
