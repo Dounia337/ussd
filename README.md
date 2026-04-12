@@ -127,7 +127,7 @@ These named constants replace magic numbers in the `respond()` calls, making the
 
 ```
 Mobile Handset
-     │  dials *123#  /  enters digits
+     │  dials *899*3028#  /  enters digits
      ▼
 USSD Gateway  ──── HTTP POST ────►  ash_3028.php
 (Telecom)           sequenceID           │
@@ -148,7 +148,7 @@ USSD Gateway  ──── HTTP POST ────►  ash_3028.php
 
 ### Dial-in (Step 0)
 ```
-User dials *123#
+User dials *899*3028#
 
 Screen:
   Welcome to Ashesi Meal Plan
