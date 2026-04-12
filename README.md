@@ -24,7 +24,7 @@ A server-side USSD application that lets Ashesi University students manage their
 | Item | Detail |
 |---|---|
 | Language | PHP (procedural) |
-| Database | MySQL / MariaDB (MySQLi extension) |
+| Database | MySQL  |
 | Protocol | USSD (Unstructured Supplementary Service Data) |
 | Gateway interface | HTTP POST — JSON response |
 | Entry point | `ash_3028.php` |
